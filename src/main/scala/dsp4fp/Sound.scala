@@ -11,14 +11,7 @@ object Sound extends App {
 
   case object Done
 
-  val pcmu16khz = new AudioFormat(16000.0f, 8, 1, true, true)
-
-  implicit class SeqIntsToAudio(val data: Seq[Int]) extends AnyVal {
-    def toAudio(format: AudioFormat = pcmu16khz) = {
-      new AudioInputStream(new ByteArrayInputStream(data.toArray.map(_.toByte)), format, AudioSystem.NOT_SPECIFIED
-      )
-    }
-  }
+  val pcmu8bit16khz = new AudioFormat(16000.0f, 8, 1, true, true)
 
   implicit class AudioInputStreamWithPlay(val ais: AudioInputStream) extends AnyVal {
     def play(blocking: Boolean = false): Future[Done.type] = {
@@ -40,24 +33,47 @@ object Sound extends App {
     }
   }
 
-  implicit class AudioDoubleFunc(val m: Double => Double) extends AnyVal {
-    def toAudio(samples: Int = 44100, format: AudioFormat = pcmu16khz) = {
-      val period = (0 to 255).map(n =>
-        (m((n / 128.0) * (Math.PI / 2)) * 128).toInt
+  object AudioSignal {
+
+    // XXX: does this need a more descriptive name?
+    // This really only works for functions that return from -1 to 1
+    def fromFunction(func: Double => Double): AudioSignal = {
+      AudioSignal(
+        Stream.iterate(0)(_ + 1).map { incr =>
+          (func(incr.toDouble / (2 * Math.PI)) * Byte.MaxValue).toByte
+        }
       )
-      SeqIntsToAudio(Stream.continually(period).flatten.take(samples)).toAudio(format)
+    }
+
+    def random() = AudioSignal(Stream.continually(Random.nextInt().toByte))
+  }
+
+
+  case class AudioSignal(data: Stream[Byte]) extends AnyVal {
+
+    protected def zeroPadded = data ++ Stream.continually(0: Byte)
+    def loop() = AudioSignal(Stream.continually(data).flatten)
+
+    def |+|(other: AudioSignal) = {
+      AudioSignal(
+        zeroPadded.zip(other.zeroPadded).map { case (a, b) => (a + b).toByte }
+      )
+    }
+
+    def delay(frames: Int) = AudioSignal(Stream.fill[Byte](frames)(0) ++ data)
+
+    def take(frames: Int) = AudioSignal(data.take(frames))
+
+    def toAudio(samples: Long, format: AudioFormat = pcmu8bit16khz) = {
+      new AudioInputStream(
+        new ByteArrayInputStream(zeroPadded.take(samples.toInt).toArray), format, AudioSystem.NOT_SPECIFIED
+      )
     }
   }
 
-  def repeat[A](seq: Seq[A], length: Int): Seq[A] = Stream.continually(seq).flatten.take(length)
-  def randomInts(size: Int) = List.iterate(0, size)(_ => Random.nextInt())
-
-  val randomSeed = List.iterate(0, 50)(_ => Random.nextInt())
-  val twoSecClip = repeat(randomSeed, pcmu16khz.getSampleRate.toInt * 2)
-  val lower = repeat(randomInts(100), pcmu16khz.getSampleRate.toInt * 2)
-  twoSecClip.toAudio().play(true)
-  lower.toAudio().play(true)
+  AudioSignal.fromFunction(Math.sin).loop().toAudio(44000).play(true)
+  AudioSignal.random().take(50).loop().toAudio(pcmu8bit16khz.getSampleRate.toInt * 2).play(true)
+  AudioSignal.random().take(100).loop().toAudio(pcmu8bit16khz.getSampleRate.toInt * 2).play(true)
 
 
 }
-
