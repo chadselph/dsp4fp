@@ -7,7 +7,7 @@ import dsp4fp.sound.{AudioSignal, Morse}
 import scala.concurrent.duration._
 import scala.concurrent.{Await, Future, Promise}
 
-object Sound extends App {
+object SoundDemo extends App {
 
   case object Done
 
